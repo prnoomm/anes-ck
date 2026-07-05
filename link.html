@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>ยืนยันข้อมูลผู้ป่วย</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+  :root {
+    --primary-a: #0D9488;
+    --primary-b: #0891B2;
+    --bg: #F1F5F4;
+    --card: #FFFFFF;
+    --text: #0F172A;
+    --text-soft: #64748B;
+    --border: #E2E8F0;
+    --green: #22C55E;
+    --amber: #F59E0B;
+    --red: #EF4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Sarabun', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 20px;
+    background: linear-gradient(135deg, var(--primary-a), var(--primary-b));
+    color: #fff;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--amber); flex-shrink: 0;
+    box-shadow: 0 0 0 3px rgba(255,255,255,0.25);
+  }
+  .dot.online { background: var(--green); }
+  .dot.offline { background: var(--red); }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; line-height: 1.3; }
+  header p { font-size: 12px; margin: 0; opacity: 0.85; }
+
+  main { max-width: 480px; margin: 0 auto; padding: 24px 16px 100px; }
+  .card {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 22px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+  }
+  .icon-circle {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: #F0FDFA; display: flex; align-items: center; justify-content: center;
+    font-size: 28px; margin: 0 auto 14px;
+  }
+  h2.title { font-size: 16px; text-align: center; margin: 0 0 4px; }
+  p.subtitle { font-size: 13px; color: var(--text-soft); text-align: center; margin: 0 0 20px; }
+
+  .info-row {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-row .label { color: var(--text-soft); }
+  .info-row .value { font-weight: 600; text-align: right; }
+
+  .confirm-btn {
+    width: 100%; padding: 15px; margin-top: 18px;
+    border: none; border-radius: 14px;
+    font-family: 'Sarabun', sans-serif; font-size: 16px; font-weight: 600;
+    color: #fff; cursor: pointer;
+    background: linear-gradient(135deg, var(--primary-a), var(--primary-b));
+    box-shadow: 0 4px 14px rgba(13,148,136,0.35);
+  }
+  .confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .not-me {
+    display: block; text-align: center; margin-top: 14px;
+    font-size: 13px; color: var(--text-soft); text-decoration: underline;
+    background: none; border: none; cursor: pointer; width: 100%;
+    font-family: 'Sarabun', sans-serif;
+  }
+
+  .loading-screen {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 60vh; color: var(--text-soft); font-size: 14px;
+    text-align: center; padding: 0 24px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="dot" id="statusDot"></div>
+  <div>
+    <h1>Post-Op Pain Delivery &amp; Tele-Anesthesia</h1>
+    <p>ยืนยันข้อมูลผู้ป่วย</p>
+  </div>
+</header>
+
+<main id="app">
+  <div class="loading-screen" id="loadingScreen">กำลังเริ่มต้น LIFF...</div>
+</main>
+
+<script>
+// ====== CONFIG ======
+const API_URL = "https://script.google.com/macros/s/AKfycbzxgLErNhsNfHECIfvIVOEMnvPXNA4WUFRo05W7noSLwM_ET9FQNxZhtOluupVXV4O5bQ/exec";
+const LIFF_ID = "2010601132-rlFTYoKE";
+// =====================
+
+let currentLineUserId = null;
+let currentHN = null;
+
+function debugStatus(msg) {
+  const el = document.getElementById('loadingScreen');
+  if (el) el.textContent = msg;
+}
+
+function setStatus(state) {
+  const dot = document.getElementById('statusDot');
+  dot.className = 'dot' + (state === 'online' ? ' online' : state === 'offline' ? ' offline' : '');
+}
+
+async function fetchWithTimeout(url, options, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms || 10000);
+  try {
+    return await fetch(url, Object.assign({}, options, { signal: controller.signal }));
+  } finally { clearTimeout(timer); }
+}
+
+function getHNFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('hn');
+}
+
+async function getPatientByHN(hn) {
+  const res = await fetchWithTimeout(API_URL + '?action=getPatientByHN&hn=' + encodeURIComponent(hn), {}, 10000);
+  return res.json();
+}
+
+function renderPatientCard(patient) {
+  document.getElementById('app').innerHTML = `
+    <div class="card">
+      <div class="icon-circle">🙋</div>
+      <h2 class="title">นี่คือข้อมูลของท่านใช่หรือไม่</h2>
+      <p class="subtitle">พยาบาลกรอกข้อมูลนี้ไว้ให้แล้ว กดยืนยันเพื่อเชื่อมต่อ LINE ของท่านกับข้อมูลนี้</p>
+
+      <div class="info-row"><span class="label">HN</span><span class="value">${patient.hn}</span></div>
+      <div class="info-row"><span class="label">ชื่อ-นามสกุล</span><span class="value">${patient.name || '-'}</span></div>
+      <div class="info-row"><span class="label">การผ่าตัด</span><span class="value">${patient.surgery || '-'}</span></div>
+
+      <button class="confirm-btn" id="confirmBtn">ใช่ ยืนยันเป็นข้อมูลของฉัน</button>
+      <button class="not-me" id="notMeBtn">นี่ไม่ใช่ข้อมูลของฉัน</button>
+    </div>
+  `;
+  document.getElementById('confirmBtn').addEventListener('click', confirmLink);
+  document.getElementById('notMeBtn').addEventListener('click', showNotMeNotice);
+}
+
+function renderMessage(icon, title, subtitle) {
+  document.getElementById('app').innerHTML = `
+    <div class="card">
+      <div class="icon-circle">${icon}</div>
+      <h2 class="title">${title}</h2>
+      <p class="subtitle">${subtitle}</p>
+    </div>
+  `;
+}
+
+function showNotMeNotice() {
+  Swal.fire({
+    title: 'กรุณาติดต่อพยาบาล',
+    text: 'ถ้าข้อมูลนี้ไม่ใช่ของท่าน กรุณาแจ้งพยาบาลที่จุดลงทะเบียนก่อนกดยืนยัน',
+    icon: 'info',
+    confirmButtonColor: '#0D9488'
+  });
+}
+
+async function confirmLink() {
+  const btn = document.getElementById('confirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'กำลังยืนยัน...';
+
+  try {
+    const res = await fetchWithTimeout(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'linkPatient',
+        data: { hn: currentHN, lineUserId: currentLineUserId }
+      })
+    }, 15000);
+    const result = await res.json();
+
+    if (result.alreadyLinked) {
+      renderMessage('⚠️', 'ไม่สามารถยืนยันได้', result.error || 'HN นี้ผูกกับบัญชี LINE อื่นไปแล้ว กรุณาติดต่อพยาบาล');
+      return;
+    }
+    if (!result.found) {
+      renderMessage('❌', 'ไม่พบข้อมูล', result.error || 'ไม่พบ HN นี้ในระบบ');
+      return;
+    }
+
+    renderMessage('✅', 'ยืนยันสำเร็จ', 'เชื่อมต่อ LINE กับข้อมูลของท่านเรียบร้อยแล้ว ระบบจะแจ้งเตือนให้ทำแบบประเมินอาการตามรอบเวลาอัตโนมัติ');
+
+    setTimeout(() => {
+      if (typeof liff !== 'undefined' && liff.isInClient && liff.isInClient()) {
+        liff.closeWindow();
+      }
+    }, 2500);
+  } catch (err) {
+    Swal.fire({ title: 'ยืนยันไม่สำเร็จ', text: err.message, icon: 'error', confirmButtonColor: '#0D9488' });
+    btn.disabled = false;
+    btn.textContent = 'ใช่ ยืนยันเป็นข้อมูลของฉัน';
+  }
+}
+
+async function init() {
+  setStatus('loading');
+
+  currentHN = getHNFromURL();
+  if (!currentHN) {
+    setStatus('offline');
+    renderMessage('❌', 'ลิงก์ไม่ถูกต้อง', 'ไม่พบ HN ในลิงก์นี้ กรุณาสแกน QR ใหม่อีกครั้ง หรือติดต่อพยาบาล');
+    return;
+  }
+
+  try {
+    debugStatus('กำลังเริ่มต้น LIFF...');
+    await liff.init({ liffId: LIFF_ID });
+
+    if (!liff.isLoggedIn()) {
+      debugStatus('กำลังเข้าสู่ระบบ LINE...');
+      liff.login();
+      return;
+    }
+
+    debugStatus('กำลังดึงข้อมูลโปรไฟล์...');
+    const profile = await liff.getProfile();
+    currentLineUserId = profile.userId;
+  } catch (err) {
+    setStatus('offline');
+    debugStatus('LIFF ผิดพลาด: ' + err.message);
+    return;
+  }
+
+  try {
+    debugStatus('กำลังตรวจสอบข้อมูลผู้ป่วย...');
+    const patient = await getPatientByHN(currentHN);
+    setStatus('online');
+
+    if (!patient.found) {
+      renderMessage('❌', 'ไม่พบข้อมูล', 'ไม่พบ HN นี้ในระบบ กรุณาติดต่อพยาบาล');
+      return;
+    }
+
+    renderPatientCard(patient);
+  } catch (err) {
+    setStatus('offline');
+    debugStatus('เชื่อมต่อระบบไม่สำเร็จ: ' + err.message);
+  }
+}
+
+init();
+</script>
+</body>
+</html>
