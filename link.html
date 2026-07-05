@@ -137,8 +137,30 @@ async function fetchWithTimeout(url, options, ms) {
 }
 
 function getHNFromURL() {
+  // 1. อ่านตรงๆ จาก query string ก่อน
   const params = new URLSearchParams(window.location.search);
-  return params.get('hn');
+  let hn = params.get('hn');
+  if (hn) return hn;
+
+  // 2. ถ้าไม่เจอ อ่านจาก liff.state — LINE ห่อ query เดิม (เช่น ?hn=HN0001)
+  //    ไว้ในพารามิเตอร์นี้ และบางสภาพแวดล้อมไม่คืนค่ากลับมาเป็น ?hn= ให้เอง
+  const state = params.get('liff.state');
+  if (state) {
+    let decoded = decodeURIComponent(state);
+    if (decoded.startsWith('?')) decoded = decoded.slice(1);
+    const inner = new URLSearchParams(decoded);
+    hn = inner.get('hn');
+    if (hn) return hn;
+  }
+
+  // 3. เผื่อ hn อยู่ใน hash (#hn=...)
+  if (window.location.hash) {
+    const h = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    hn = h.get('hn');
+    if (hn) return hn;
+  }
+
+  return null;
 }
 
 async function getPatientByHN(hn) {
